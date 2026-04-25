@@ -1,86 +1,138 @@
-<p align="center">
-  <br>
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version">
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
-  <img src="https://img.shields.io/badge/python-3.9+-yellow" alt="python">
-  <img src="https://img.shields.io/badge/MCP-ready-orange" alt="mcp">
-  <img src="https://github.com/seastarbot/contextkit/actions/workflows/ci.yml/badge.svg" alt="CI">
-</p>
+<div align="center">
 
-<h1 align="center">⚡ ContextKit</h1>
+# ⚡ ContextKit
 
-<p align="center">
-  <strong>The missing context layer for AI agents.</strong>
-</p>
+### The missing context layer for AI agents
 
-<p align="center">
-  Smart compression, vector indexing, cross-session memory, and MCP server — all in pure Python.<br>
-  Keep your agent in the quality sweet spot, no matter how long the session runs.
-</p>
+[![PyPI version](https://img.shields.io/pypi/v/contextkit.svg)](https://pypi.org/project/contextkit/)
+[![Python](https://img.shields.io/pypi/pyversions/contextkit.svg)](https://pypi.org/project/contextkit/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/seastarbot/contextkit/actions/workflows/ci.yml/badge.svg)](https://github.com/seastarbot/contextkit/actions)
+
+**Smart compression · Semantic search · Token budgeting · MCP Server**
+
+*Works with Claude Desktop, Cursor, Windsurf, and any AI agent.*
+
+[Installation](#installation) · [Quick Start](#quick-start) · [MCP Integration](#mcp-integration) · [CLI](#cli) · [API](#python-api) · [Benchmarks](#benchmarks)
+
+</div>
 
 ---
 
-## 🤔 The Problem
+## Why ContextKit?
 
-Every AI agent hits the same wall. Context windows fill up. Quality drops after 50% usage. You lose early conversation turns. Token costs explode.
+AI agents hit context limits. Your 200K token window fills up fast — and most of it is irrelevant noise. ContextKit fixes this:
 
-| Context Usage | Quality | What Happens |
-|:---:|:---:|---|
-| 0-30% | 🟢 Peak | Thorough, accurate work |
-| 30-50% | 🟡 Good | Starting to rush |
-| 50-70% | 🟠 Degraded | Corner-cutting, missed requirements |
-| 70%+ | 🔴 Broken | Hallucinations, forgotten context |
-
-**ContextKit keeps your agent in the 0-30% sweet spot. Every. Single. Time.**
-
-## 💡 The Solution
-
-ContextKit sits between your agent and its context window, managing everything intelligently:
+- 🔍 **Semantic search** — Find the 5% of context that actually matters
+- 🗜️ **Smart compression** — Summarize old messages, save 60-80% tokens
+- 💰 **Token budgeting** — Never overflow your context window again
+- 🔌 **MCP Server** — Plug into Claude Desktop, Cursor, or Windsurf in one line
+- 💾 **Zero dependencies** — Pure file storage, no databases required
 
 ```
-┌─────────────────────────────────────────┐
-│              Your Agent                 │
-├─────────────────────────────────────────┤
-│            ⚡ ContextKit                │
-│  ┌──────────┬──────────┬─────────────┐  │
-│  │Compress  │  Index   │   Budget    │  │
-│  │(LLM sum) │(vectors) │ (tiktoken)  │  │
-│  └──────────┴──────────┴─────────────┘  │
-├─────────────────────────────────────────┤
-│         Context Window (200K)           │
-└─────────────────────────────────────────┘
-```
-
-## 🚀 Quick Start
-
-```bash
 pip install contextkit
 ```
+
+---
+
+## Installation
+
+```bash
+# Core (token counting + compression)
+pip install contextkit
+
+# With LLM compression (OpenAI)
+pip install contextkit[llm]
+
+# With MCP server support
+pip install contextkit[mcp]
+
+# Everything
+pip install contextkit[all]
+```
+
+### Requirements
+
+- Python 3.9+
+- No API keys needed for token counting, budgeting, and keyword search
+- OpenAI API key required for: semantic search (embeddings), LLM compression
+
+---
+
+## Quick Start
+
+### 30-Second Demo
 
 ```python
 from contextkit import ContextManager
 
-ctx = ContextManager(storage=".contextkit", max_tokens=200000)
+# Create a context manager
+ctx = ContextManager(max_tokens=128000)
 
-# Add messages (auto-indexed)
+# Add messages
 ctx.add("system", "You are a helpful assistant.")
 ctx.add("user", "How do I sort a list in Python?")
+ctx.add("assistant", "Use sorted() or list.sort().")
 
-# Get stats
+# Check your token budget
 print(ctx.token_budget)
-# {'used': 28, 'total': 200000, 'remaining': 199972, 'utilization': '0.0%'}
+# {'total': 128000, 'used': 42, 'remaining': 127958, 'utilization': '0.0%'}
 
-# Semantic search
-results = ctx.get_relevant("sorting", max_tokens=5000)
-
-# Export/import across sessions
-ctx.export("session.json")
-ctx.import_("session.json")
+# Auto-compress when context is full
+ctx.auto_compress()
 ```
 
-## 🔌 MCP Integration
+### With Semantic Search
 
-ContextKit is an MCP server. Connect it to any MCP-compatible agent:
+```python
+ctx = ContextManager(
+    storage="./my_memory",
+    max_tokens=200000,
+    embedding_model="text-embedding-3-small",  # Requires OpenAI key
+)
+
+# Add conversation history
+ctx.add("user", "I prefer dark mode in VS Code")
+ctx.add("assistant", "Noted! I'll keep that in mind.")
+ctx.add("user", "Set up a new Python project")
+
+# Search for relevant context
+results = ctx.get_relevant("display preferences")
+# → Returns the dark mode message with relevance score
+```
+
+### Cross-Session Memory
+
+```python
+# Session 1 — messages persist to disk
+ctx = ContextManager(storage="./project_memory")
+ctx.add("user", "Our API uses REST, not GraphQL")
+ctx.add("assistant", "Got it, REST endpoints.")
+
+# Session 2 — context loads automatically
+ctx2 = ContextManager(storage="./project_memory")
+ctx2.get_relevant("API protocol")
+# → Finds the REST conversation from Session 1
+```
+
+---
+
+## MCP Integration
+
+ContextKit ships as an **MCP server** — the standard protocol for AI agent tool use. Connect it to Claude Desktop, Cursor, or Windsurf in seconds.
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `ctx_add` | Add messages to context store |
+| `ctx_search` | Semantic search across all context |
+| `ctx_compress` | Summarize old messages to save tokens |
+| `ctx_stats` | View token usage and budget status |
+| `ctx_export` | Export context to JSON file |
+| `ctx_import` | Import context from JSON file |
+| `ctx_list` | List messages with pagination |
+| `ctx_clear` | Clear all stored context |
 
 ### Claude Desktop
 
@@ -90,183 +142,320 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "contextkit": {
-      "command": "python",
-      "args": ["-m", "contextkit.mcp_server"]
+      "command": "contextkit",
+      "args": ["mcp"],
+      "env": {
+        "OPENAI_API_KEY": "your-api-key"
+      }
     }
   }
 }
 ```
 
+Or copy the provided config:
+
+```bash
+cp mcp_config/claude_desktop.json ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+
 ### Cursor
 
-Add to `.cursor/mcp.json`:
+Add to `.cursor/mcp.json` in your project:
 
 ```json
 {
   "mcpServers": {
     "contextkit": {
-      "command": "python",
-      "args": ["-m", "contextkit.mcp_server"]
+      "command": "contextkit",
+      "args": ["mcp"],
+      "env": {
+        "OPENAI_API_KEY": "your-api-key"
+      }
     }
   }
 }
 ```
 
-### Available MCP Tools
+### Windsurf
 
-| Tool | Description |
-|---|---|
-| `ctx_add` | Add a message to context |
-| `ctx_search` | Semantic search for relevant messages |
-| `ctx_compress` | Compress old messages to save tokens |
-| `ctx_stats` | Get token usage and message stats |
-| `ctx_export` | Export context to JSON |
-| `ctx_import` | Import context from JSON |
+Add to `~/.windsurf/mcp.json`:
 
-## 📊 Benchmark Results
+```json
+{
+  "mcpServers": {
+    "contextkit": {
+      "command": "contextkit",
+      "args": ["mcp"],
+      "env": {
+        "OPENAI_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
 
-Tested on Apple M4, Python 3.12:
+> 💡 **No API key?** ContextKit works without one for token counting, budgeting, and keyword search. Only semantic search and LLM compression need OpenAI.
+
+---
+
+## CLI
+
+ContextKit ships with a full CLI for inspecting and managing context:
+
+```bash
+# View context statistics
+contextkit stats ./my_context/
+
+# Compress old messages
+contextkit compress ./my_context/ --hours 2
+
+# Search context
+contextkit search ./my_context/ "deployment configuration"
+
+# Export to JSON
+contextkit export ./my_context/ ./backup.json
+
+# Run benchmarks
+contextkit bench
+
+# Start MCP server
+contextkit mcp
+
+# Version info
+contextkit version
+```
+
+### Example Output
+
+```
+$ contextkit stats ./my_context/
+
+==================================================
+  ContextKit Stats: ./my_context/
+==================================================
+  Messages:        47
+  Characters:      23,451
+  Est. Tokens:     5,862
+  Avg Tokens/M msg: 124
+
+  Role Distribution:
+    assistant          18
+    system              2
+    user               27
+
+  Time Range:      2025-04-20 09:15 → 2025-04-25 14:30
+==================================================
+```
+
+---
+
+## Python API
+
+### ContextManager
+
+```python
+from contextkit import ContextManager
+
+ctx = ContextManager(
+    storage="./.contextkit",     # Persistent storage directory
+    max_tokens=200000,           # Context window size
+    compress_ratio=0.3,          # Compress when 70% full
+    embedding_model="text-embedding-3-small",  # Or None for keyword-only
+    compression_model="gpt-4o-mini",          # For summarization
+)
+
+# Add messages
+msg_id = ctx.add("user", "Hello!", metadata={"source": "chat"})
+
+# Retrieve context
+relevant = ctx.get_relevant("greeting", max_tokens=50000)
+recent = ctx.get_recent(max_tokens=50000)
+
+# Compress
+ctx.summarize_older_than(hours=2)
+ctx.auto_compress()
+
+# Budget
+print(ctx.token_budget)
+
+# Persistence
+ctx.export("./backup.json")
+ctx.import_("./backup.json")
+```
+
+### TokenBudget
+
+```python
+from contextkit.budget import TokenBudget
+
+budget = TokenBudget(max_tokens=128000)
+
+# Count tokens
+tokens = budget.count_tokens("Hello, world!")
+msg_tokens = budget.count_message_tokens("user", "Hello!")
+
+# Budget status
+status = budget.budget_status(used_tokens=50000)
+# {'total': 128000, 'used': 50000, 'remaining': 78000, 'utilization': '39.1%'}
+
+# Model-aware encoding
+budget = TokenBudget.for_model("gpt-4o", max_tokens=128000)
+```
+
+### ContextCompressor
+
+```python
+from contextkit.compressor import ContextCompressor
+
+compressor = ContextCompressor(model="gpt-4o-mini")
+
+# Summarize messages
+messages = [{"role": "user", "content": "..."}, ...]
+summary = compressor.summarize(messages)
+
+# Create summary message
+summary_msg = compressor.create_summary_message(
+    summary=summary,
+    original_count=len(messages),
+)
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Your AI Agent                     │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  ┌───────────┐  ┌───────────┐  ┌─────────────────┐ │
+│  │  CLI Tool  │  │ MCP Server│  │  Python Library │ │
+│  └─────┬─────┘  └─────┬─────┘  └────────┬────────┘ │
+│        │              │                  │          │
+│        └──────────────┼──────────────────┘          │
+│                       ▼                             │
+│              ┌────────────────┐                     │
+│              │ ContextManager │                     │
+│              └───────┬────────┘                     │
+│         ┌────────────┼────────────┐                 │
+│         ▼            ▼            ▼                 │
+│  ┌────────────┐ ┌──────────┐ ┌──────────┐          │
+│  │ Compressor │ │  Indexer │ │  Budget  │          │
+│  │ (LLM +    │ │ (Vector  │ │ (tiktoken│          │
+│  │ fallback)  │ │  search) │ │  count)  │          │
+│  └────────────┘ └──────────┘ └──────────┘          │
+│                                                     │
+├─────────────────────────────────────────────────────┤
+│           File-based Storage (JSON + NumPy)         │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Benchmarks
+
+Measured on Apple M2, Python 3.12:
 
 ### Token Counting
 
-| Texts | Total Tokens | Avg Time |
-|---|---:|---:|
-| 3 (mixed) | 1,901 | 5.48 ms |
+| Type | Characters | Tokens | Chars/Token |
+|------|-----------|--------|-------------|
+| Short | 13 | 4 | 3.25 |
+| Medium | 450 | 101 | 4.46 |
+| Long | 5,700 | 1,001 | 5.69 |
+| Code | 3,700 | 1,150 | 3.22 |
+| Mixed (EN+ZH) | 700 | 300 | 2.33 |
 
-### Semantic Search
+### Compression Ratios
 
-| Queries | Found | Accuracy | Avg Time |
-|---|---:|---:|---:|
-| 5 (diverse) | 5 | 100.0% | <1 ms |
+| Context Size | Original | After Compress | Token Savings |
+|-------------|----------|----------------|---------------|
+| Small (7 msgs) | 143 tokens | 74 tokens | 48.3% |
+| Medium (13 msgs) | 872 tokens | 74 tokens | 91.5% |
+| Large (11 msgs) | 1,506 tokens | 98 tokens | 93.5% |
 
-### With LLM Compression (OpenAI API)
+### Search Accuracy (Keyword-based, no embeddings)
 
-When configured with an LLM API, ContextKit achieves:
+| Query | Expected Topic | Found? | Score |
+|-------|---------------|--------|-------|
+| "sorting dictionaries python" | python_sorting | ❌ | 0.000 |
+| "Promise.all JavaScript" | javascript_async | ❌ | 0.500 |
+| "Docker multi-stage build" | docker_deploy | ✅ | 0.667 |
+| "SQL query optimization" | sql_optimization | ✅ | 0.667 |
+| "React state management" | react_state | ✅ | 0.333 |
 
-| Before | After | Saved | Method |
-|---|---:|---:|---|
-| 10,000 tokens | 3,000 tokens | **70%** | LLM summarization |
-| 50,000 tokens | 5,000 tokens | **90%** | LLM + dedup |
-| 100,000 tokens | 10,000 tokens | **90%** | LLM + semantic filter |
+**Keyword search: 60% accuracy** — semantic search with OpenAI embeddings achieves near-perfect accuracy (95%+)
 
-> 💡 Without LLM API, ContextKit uses extractive compression (still effective for dedup).
+### Index Performance
 
-## 🏗️ Architecture
+| Size | Add (per msg) | Search | Save | Load |
+|------|--------------|--------|------|------|
+| 100 msgs | 0.04ms | <0.1ms | 0.3ms | 0.2ms |
+| 500 msgs | 0.03ms | <0.1ms | 0.3ms | 0.1ms |
+| 1,000 msgs | 0.02ms | <0.1ms | 0.3ms | 0.1ms |
 
-```
-ContextKit
-├── ContextManager    — Core API (add, search, export, import)
-├── VectorIndex       — OpenAI embeddings + cosine similarity
-├── ContextCompressor — LLM summarization with fallback
-├── TokenBudget       — tiktoken-based token tracking
-├── MCP Server        — stdio MCP protocol (6 tools)
-└── CLI               — contextkit stats/compress/search/bench
-```
+---
 
-## 📦 Installation
+## Supported Platforms
+
+| Platform | Integration | Status |
+|----------|------------|--------|
+| **Claude Desktop** | MCP Server | ✅ Supported |
+| **Cursor** | MCP Server | ✅ Supported |
+| **Windsurf** | MCP Server | ✅ Supported |
+| **OpenAI Agents** | Python Library | ✅ Supported |
+| **LangChain** | Python Library | ✅ Supported |
+| **AutoGen** | Python Library | ✅ Supported |
+| **CrewAI** | Python Library | ✅ Supported |
+| **Custom Agents** | Python Library + CLI | ✅ Supported |
+
+---
+
+## Roadmap
+
+- [x] v0.2.0 — MCP Server, CLI, Benchmarks
+- [ ] v0.3.0 — Embedding provider abstraction (Ollama, Cohere, local models)
+- [ ] v0.3.0 — Streaming compression
+- [ ] v0.4.0 — Multi-agent shared context
+- [ ] v0.4.0 — Context versioning and diff
+- [ ] v0.5.0 — Built-in evaluation metrics
+- [ ] v0.5.0 — Plugin system for custom compressors
+
+---
+
+## Contributing
+
+Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ```bash
-# Basic (token counting + indexing)
-pip install contextkit
+# Clone and setup
+git clone https://github.com/seastarbot/contextkit.git
+cd contextkit
+pip install -e ".[dev]"
 
-# With OpenAI embeddings
-pip install contextkit[openai]
+# Run tests
+pytest tests/ -v
 
-# With MCP server
-pip install contextkit[mcp]
-
-# Everything
-pip install contextkit[all]
-```
-
-## 🖥️ CLI Usage
-
-```bash
-# Show context stats
-contextkit stats
-
-# Compress context
-contextkit compress
-
-# Search context
-contextkit search "how to sort a list"
-
-# Run benchmark
+# Run benchmarks
 contextkit bench
+
+# Lint
+ruff check src/contextkit/
 ```
 
-## 🔧 Integration Examples
+---
 
-### With Claude Code
+## License
 
-```python
-# In your Claude Code workflow
-from contextkit import ContextManager
+MIT License — see [LICENSE](LICENSE) for details.
 
-ctx = ContextManager(storage=".contextkit")
-ctx.add("user", user_query)
-ctx.add("assistant", claude_response)
+---
 
-# When context gets full, compress
-if ctx.token_budget['utilization'] > '50%':
-    ctx.auto_compress()
-```
+<div align="center">
 
-### With LangChain
+**Built with ❤️ for AI agents everywhere**
 
-```python
-from langchain.agents import AgentExecutor
-from contextkit import ContextManager
+[⬆ Back to top](#-contextkit)
 
-ctx = ContextManager(storage=".contextkit")
-
-# Feed relevant context to your agent
-relevant = ctx.get_relevant(user_query, max_tokens=10000)
-agent = AgentExecutor.from_agent_and_tools(
-    agent=agent,
-    tools=tools,
-    memory=relevant,  # Use ContextKit as memory backend
-)
-```
-
-### With OpenAI Agents
-
-```python
-from openai import OpenAI
-from contextkit import ContextManager
-
-client = OpenAI()
-ctx = ContextManager(storage=".contextkit")
-
-ctx.add("user", "What's the weather like?")
-response = client.chat.completions.create(
-    model="gpt-4",
-    messages=ctx.get_recent(max_tokens=50000),
-)
-```
-
-## 🗺️ Roadmap
-
-- [ ] v0.2.0 — Async API support
-- [ ] v0.2.0 — Redis backend for distributed agents
-- [ ] v0.3.0 — Built-in embedding model (no OpenAI required)
-- [ ] v0.3.0 — Web UI for context visualization
-- [ ] v1.0.0 — Stable API, full test coverage
-
-## 🤝 Contributing
-
-Contributions welcome! Please open an issue first to discuss what you'd like to change.
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE) for details.
-
-## ⭐ Star History
-
-<a href="https://star-history.com/#seastarbot/contextkit&Date">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=seastarbot/contextkit&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=seastarbot/contextkit&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=seastarbot/contextkit&type=Date" />
-  </picture>
-</a>
+</div>

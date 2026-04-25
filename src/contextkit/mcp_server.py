@@ -56,7 +56,7 @@ def _get_ctx(
 # Create the MCP server
 mcp = FastMCP(
     "ContextKit",
-    description="The missing context layer for AI agents — smart compression, semantic search, and token budgeting.",
+    instructions="The missing context layer for AI agents — smart compression, semantic search, and token budgeting.",
 )
 
 
