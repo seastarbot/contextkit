@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "contextkit": {
+      "command": "contextkit",
+      "args": ["mcp"],
+      "env": {
+        "CONTEXTKIT_STORAGE": "~/.contextkit/mcp_store",
+        "OPENAI_API_KEY": "your-api-key-here"
+      }
+    }
+  }
+}

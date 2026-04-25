@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "contextkit"
-version = "0.1.0"
-description = "The Swiss Army knife for AI agent context management. Smart compression, vector indexing, on-demand loading, and cross-session memory."
+version = "0.2.0"
+description = "The missing context layer for AI agents — smart compression, semantic search, token budgeting, and MCP server."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -17,13 +17,18 @@ keywords = [
     "agent",
     "context",
     "llm",
+    "mcp",
     "openai",
     "langchain",
     "memory",
     "embedding",
+    "context-window",
+    "token-budget",
+    "compression",
+    "semantic-search",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -36,21 +41,33 @@ classifiers = [
 ]
 
 dependencies = [
-    "openai>=1.0.0",
     "tiktoken>=0.5.0",
     "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
+llm = [
+    "openai>=1.0.0",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+all = [
+    "openai>=1.0.0",
+    "mcp>=1.0.0",
+]
 dev = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
+    "ruff>=0.4.0",
 ]
 
+[project.scripts]
+contextkit = "contextkit.cli:main"
+
 [project.urls]
-Homepage = "https://github.com/your-username/contextkit"
-Repository = "https://github.com/your-username/contextkit"
-Issues = "https://github.com/your-username/contextkit/issues"
+Homepage = "https://github.com/seastarbot/contextkit"
+Repository = "https://github.com/seastarbot/contextkit"
+Issues = "https://github.com/seastarbot/contextkit/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/contextkit"]
