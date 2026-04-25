@@ -240,10 +240,79 @@ def cmd_export(args: argparse.Namespace) -> None:
     print(f"\n  Exported {len(messages)} messages to {args.output} ({size:,} bytes)\n")
 
 
+def cmd_import(args: argparse.Namespace) -> None:
+    """Import messages from a JSON export file into a context store."""
+    import_path = Path(args.file)
+    if not import_path.exists():
+        print(f"Error: {args.file} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse the export file
+    data = json.loads(import_path.read_text())
+    if isinstance(data, dict) and "messages" in data:
+        messages = data["messages"]
+    elif isinstance(data, list):
+        messages = data
+    else:
+        print("Error: Unrecognized JSON format", file=sys.stderr)
+        sys.exit(1)
+
+    # Determine target storage
+    storage_dir = Path(args.storage) if args.storage else Path(".contextkit")
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    messages_file = storage_dir / "messages.json"
+
+    # Merge: load existing, skip duplicates
+    existing: list[dict] = []
+    if messages_file.exists():
+        try:
+            existing = json.loads(messages_file.read_text())
+        except Exception:
+            existing = []
+
+    existing_ids = {m.get("id") for m in existing}
+    imported_count = 0
+    for msg in messages:
+        if msg.get("id") not in existing_ids:
+            existing.append(msg)
+            existing_ids.add(msg.get("id"))
+            imported_count += 1
+
+    # Sort by timestamp and write
+    existing.sort(key=lambda m: m.get("timestamp", 0))
+    messages_file.write_text(json.dumps(existing, indent=2, ensure_ascii=False))
+
+    total_tokens = sum(_count_tokens(m.get("content", "")) for m in existing)
+    print(f"\n  Imported {imported_count} messages from {args.file}")
+    print(f"  Storage:  {storage_dir}")
+    print(f"  Total:    {len(existing)} messages, ~{total_tokens:,} tokens\n")
+
+
 def cmd_bench(args: argparse.Namespace) -> None:
     """Run the benchmark suite."""
-    from benchmarks.benchmark import run_benchmarks
-    run_benchmarks()
+    import importlib.util
+
+    # Try installed package path first, then source tree
+    try:
+        from benchmarks.benchmark import run_benchmarks  # type: ignore[import]
+
+        run_benchmarks()
+        return
+    except ImportError:
+        pass
+
+    # Locate benchmark.py relative to this file (works in source tree)
+    bench_file = Path(__file__).resolve().parent.parent.parent / "benchmarks" / "benchmark.py"
+    if bench_file.exists():
+        spec = importlib.util.spec_from_file_location("benchmark", bench_file)
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+            mod.run_benchmarks()
+            return
+
+    print("Error: benchmarks/benchmark.py not found. Run from the project root.", file=sys.stderr)
+    sys.exit(1)
 
 
 def cmd_mcp(args: argparse.Namespace) -> None:
@@ -292,6 +361,16 @@ def main() -> None:
     p_export.add_argument("file", help="Source context file or directory")
     p_export.add_argument("output", help="Output file path")
     p_export.set_defaults(func=cmd_export)
+
+    # import
+    p_import = subparsers.add_parser("import", help="Import context from a JSON export file")
+    p_import.add_argument("file", help="JSON export file to import")
+    p_import.add_argument(
+        "--storage",
+        default="",
+        help="Target storage directory (default: .contextkit)",
+    )
+    p_import.set_defaults(func=cmd_import)
 
     # bench
     p_bench = subparsers.add_parser("bench", help="Run benchmarks")

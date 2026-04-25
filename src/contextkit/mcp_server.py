@@ -4,6 +4,8 @@ Exposes ContextKit capabilities as MCP tools, enabling any AI agent
 (Claude Desktop, Cursor, Windsurf) to manage context through the
 Model Context Protocol.
 
+Uses the mcp.server.Server low-level API for full protocol control.
+
 Usage:
     # Run directly
     python -m contextkit.mcp_server
@@ -14,32 +16,36 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
-import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import Server
+from mcp.server.models import InitializationOptions
+from mcp.server.stdio import stdio_server
+from mcp.types import (
+    TextContent,
+    Tool,
+)
 
 from contextkit.core import ContextManager
 
-# Default storage location
+# ---------------------------------------------------------------------------
+# Storage configuration
+# ---------------------------------------------------------------------------
+
 DEFAULT_STORAGE = os.environ.get(
     "CONTEXTKIT_STORAGE",
     str(Path.home() / ".contextkit" / "mcp_store"),
 )
 
-# Global context manager instance (initialized per-session)
 _ctx: ContextManager | None = None
 
 
-def _get_ctx(
-    storage: str | None = None,
-    max_tokens: int = 200000,
-) -> ContextManager:
-    """Get or create the global ContextManager instance."""
+def _get_ctx(storage: str | None = None, max_tokens: int = 200_000) -> ContextManager:
+    """Return (or create) the global ContextManager instance."""
     global _ctx
     store = storage or DEFAULT_STORAGE
     if _ctx is None or str(_ctx.storage_dir) != store:
@@ -47,40 +53,222 @@ def _get_ctx(
             storage=store,
             max_tokens=max_tokens,
             compress_ratio=0.3,
-            embedding_model=None,  # No embedding by default in MCP mode
+            embedding_model=None,           # no embeddings by default in MCP mode
             compression_model="gpt-4o-mini",
         )
     return _ctx
 
 
-# Create the MCP server
-mcp = FastMCP(
-    "ContextKit",
-    instructions="The missing context layer for AI agents — smart compression, semantic search, and token budgeting.",
-)
+# ---------------------------------------------------------------------------
+# Tool registry
+# ---------------------------------------------------------------------------
+
+TOOLS: list[Tool] = [
+    Tool(
+        name="ctx_add",
+        description=(
+            "Add a message to the ContextKit store. "
+            "Persists to disk automatically."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "role": {
+                    "type": "string",
+                    "description": 'Message role: "user", "assistant", or "system".',
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The message text content.",
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path (overrides default).",
+                    "default": "",
+                },
+                "metadata_json": {
+                    "type": "string",
+                    "description": "Optional JSON string of metadata key-value pairs.",
+                    "default": "{}",
+                },
+            },
+            "required": ["role", "content"],
+        },
+    ),
+    Tool(
+        name="ctx_search",
+        description=(
+            "Search the context store for messages relevant to a query. "
+            "Uses semantic search when embeddings are available, "
+            "otherwise falls back to keyword matching."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query to search for.",
+                },
+                "max_tokens": {
+                    "type": "integer",
+                    "description": "Maximum total tokens in returned results.",
+                    "default": 50000,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of messages to return.",
+                    "default": 10,
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
+    Tool(
+        name="ctx_compress",
+        description=(
+            "Compress old messages into a summary to reclaim token budget. "
+            "Messages older than `hours` are summarized into one system message."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": (
+                        "Compress messages older than this many hours. "
+                        "Use 0 for aggressive compression."
+                    ),
+                    "default": 1,
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="ctx_stats",
+        description=(
+            "Get statistics about the context store: token usage, "
+            "message counts, role distribution, and storage size."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="ctx_export",
+        description="Export the entire context store to a JSON file.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "output_path": {
+                    "type": "string",
+                    "description": "Destination file path for the exported JSON.",
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+            "required": ["output_path"],
+        },
+    ),
+    Tool(
+        name="ctx_import",
+        description=(
+            "Import messages from a previously exported JSON file "
+            "into the context store. Skips duplicate message IDs."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "input_path": {
+                    "type": "string",
+                    "description": "Path to the JSON export file to import.",
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+            "required": ["input_path"],
+        },
+    ),
+    Tool(
+        name="ctx_list",
+        description="List messages in the context store with pagination.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of messages to return.",
+                    "default": 20,
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Number of messages to skip (for pagination).",
+                    "default": 0,
+                },
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+        },
+    ),
+    Tool(
+        name="ctx_clear",
+        description=(
+            "Clear ALL messages from the context store. "
+            "This is irreversible — use with caution."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "storage": {
+                    "type": "string",
+                    "description": "Optional storage directory path.",
+                    "default": "",
+                },
+            },
+        },
+    ),
+]
 
 
-@mcp.tool()
-def ctx_add(
-    role: str,
-    content: str,
-    storage: str = "",
-    metadata_json: str = "{}",
-) -> str:
-    """Add a message to the context store.
+# ---------------------------------------------------------------------------
+# Tool implementations (synchronous helpers)
+# ---------------------------------------------------------------------------
 
-    Args:
-        role: Message role — "user", "assistant", or "system".
-        content: The message text content.
-        storage: Optional custom storage directory path.
-        metadata_json: Optional JSON string with metadata key-value pairs.
+def _tool_ctx_add(args: dict[str, Any]) -> str:
+    role = str(args.get("role", "user"))
+    content = str(args.get("content", ""))
+    storage = str(args.get("storage", "")) or None
+    metadata_json = str(args.get("metadata_json", "{}"))
 
-    Returns:
-        A confirmation message with the message ID and current token usage.
-    """
-    ctx = _get_ctx(storage=storage or None)
+    ctx = _get_ctx(storage=storage)
+
     try:
-        metadata = json.loads(metadata_json) if metadata_json else {}
+        metadata = json.loads(metadata_json) if metadata_json.strip() else {}
     except json.JSONDecodeError:
         metadata = {}
 
@@ -102,25 +290,13 @@ def ctx_add(
     )
 
 
-@mcp.tool()
-def ctx_search(
-    query: str,
-    max_tokens: int = 50000,
-    max_results: int = 10,
-    storage: str = "",
-) -> str:
-    """Search context semantically to find relevant past messages.
+def _tool_ctx_search(args: dict[str, Any]) -> str:
+    query = str(args.get("query", ""))
+    max_tokens = int(args.get("max_tokens", 50000))
+    max_results = int(args.get("max_results", 10))
+    storage = str(args.get("storage", "")) or None
 
-    Args:
-        query: Natural language query to search for.
-        max_tokens: Maximum total tokens in returned results.
-        max_results: Maximum number of messages to return.
-        storage: Optional custom storage directory path.
-
-    Returns:
-        JSON with matching messages ranked by relevance.
-    """
-    ctx = _get_ctx(storage=storage or None)
+    ctx = _get_ctx(storage=storage)
     results = ctx.get_relevant(query=query, max_tokens=max_tokens)
 
     output = []
@@ -130,7 +306,7 @@ def ctx_search(
                 "id": msg.get("id", ""),
                 "role": msg.get("role", ""),
                 "content": msg.get("content", "")[:2000],
-                "relevance_score": msg.get("relevance_score", 0),
+                "relevance_score": round(float(msg.get("relevance_score", 0)), 4),
                 "timestamp": msg.get("timestamp", 0),
             }
         )
@@ -146,25 +322,11 @@ def ctx_search(
     )
 
 
-@mcp.tool()
-def ctx_compress(
-    hours: int = 1,
-    storage: str = "",
-) -> str:
-    """Compress old messages into summaries to save token budget.
+def _tool_ctx_compress(args: dict[str, Any]) -> str:
+    hours = int(args.get("hours", 1))
+    storage = str(args.get("storage", "")) or None
 
-    Summarizes messages older than the specified number of hours,
-    dramatically reducing token usage while preserving key information.
-
-    Args:
-        hours: Only compress messages older than this many hours. Use 0 for aggressive compression.
-        storage: Optional custom storage directory path.
-
-    Returns:
-        A summary of the compression operation.
-    """
-    ctx = _get_ctx(storage=storage or None)
-
+    ctx = _get_ctx(storage=storage)
     before_budget = ctx.token_budget
     compressed_count = ctx.summarize_older_than(hours=hours)
     after_budget = ctx.token_budget
@@ -181,29 +343,17 @@ def ctx_compress(
                 "used": after_budget["used"],
                 "utilization": after_budget["utilization"],
             },
+            "tokens_saved": int(before_budget["used"]) - int(after_budget["used"]),
         },
         indent=2,
     )
 
 
-@mcp.tool()
-def ctx_stats(
-    storage: str = "",
-) -> str:
-    """Get current context store statistics.
-
-    Returns token usage, message count, budget status, and storage info.
-
-    Args:
-        storage: Optional custom storage directory path.
-
-    Returns:
-        JSON with detailed context statistics.
-    """
-    ctx = _get_ctx(storage=storage or None)
+def _tool_ctx_stats(args: dict[str, Any]) -> str:
+    storage = str(args.get("storage", "")) or None
+    ctx = _get_ctx(storage=storage)
     budget = ctx.token_budget
 
-    # Check if storage exists and its size
     storage_path = Path(str(ctx.storage_dir))
     storage_size = 0
     if storage_path.exists():
@@ -211,15 +361,14 @@ def ctx_stats(
             if f.is_file():
                 storage_size += f.stat().st_size
 
-    # Count message types
     role_counts: dict[str, int] = {}
     for msg in ctx.messages:
         role = msg.get("role", "unknown")
         role_counts[role] = role_counts.get(role, 0) + 1
 
-    # Check for summaries
     summary_count = sum(
-        1 for m in ctx.messages
+        1
+        for m in ctx.messages
         if m.get("metadata", {}).get("type") == "summary"
     )
 
@@ -237,21 +386,14 @@ def ctx_stats(
     )
 
 
-@mcp.tool()
-def ctx_export(
-    output_path: str,
-    storage: str = "",
-) -> str:
-    """Export the entire context store to a JSON file.
+def _tool_ctx_export(args: dict[str, Any]) -> str:
+    output_path = str(args.get("output_path", ""))
+    storage = str(args.get("storage", "")) or None
 
-    Args:
-        output_path: File path for the exported JSON.
-        storage: Optional custom storage directory path.
+    if not output_path:
+        return json.dumps({"status": "error", "message": "output_path is required"})
 
-    Returns:
-        A confirmation with export details.
-    """
-    ctx = _get_ctx(storage=storage or None)
+    ctx = _get_ctx(storage=storage)
     ctx.export(output_path)
 
     file_size = Path(output_path).stat().st_size if Path(output_path).exists() else 0
@@ -267,21 +409,19 @@ def ctx_export(
     )
 
 
-@mcp.tool()
-def ctx_import(
-    input_path: str,
-    storage: str = "",
-) -> str:
-    """Import messages from a JSON export file into the context store.
+def _tool_ctx_import(args: dict[str, Any]) -> str:
+    input_path = str(args.get("input_path", ""))
+    storage = str(args.get("storage", "")) or None
 
-    Args:
-        input_path: Path to the JSON file to import.
-        storage: Optional custom storage directory path.
+    if not input_path:
+        return json.dumps({"status": "error", "message": "input_path is required"})
 
-    Returns:
-        A confirmation with import details.
-    """
-    ctx = _get_ctx(storage=storage or None)
+    if not Path(input_path).exists():
+        return json.dumps(
+            {"status": "error", "message": f"File not found: {input_path}"}
+        )
+
+    ctx = _get_ctx(storage=storage)
     count = ctx.import_(input_path)
 
     return json.dumps(
@@ -294,28 +434,17 @@ def ctx_import(
     )
 
 
-@mcp.tool()
-def ctx_list(
-    limit: int = 20,
-    offset: int = 0,
-    storage: str = "",
-) -> str:
-    """List messages in the context store with pagination.
+def _tool_ctx_list(args: dict[str, Any]) -> str:
+    limit = int(args.get("limit", 20))
+    offset = int(args.get("offset", 0))
+    storage = str(args.get("storage", "")) or None
 
-    Args:
-        limit: Maximum number of messages to return (default 20).
-        offset: Number of messages to skip (for pagination).
-        storage: Optional custom storage directory path.
-
-    Returns:
-        JSON with a paginated list of messages.
-    """
-    ctx = _get_ctx(storage=storage or None)
+    ctx = _get_ctx(storage=storage)
     total = len(ctx.messages)
-    messages = ctx.messages[offset : offset + limit]
+    page = ctx.messages[offset: offset + limit]
 
     output = []
-    for msg in messages:
+    for msg in page:
         output.append(
             {
                 "id": msg.get("id", ""),
@@ -339,20 +468,11 @@ def ctx_list(
     )
 
 
-@mcp.tool()
-def ctx_clear(storage: str = "") -> str:
-    """Clear all messages from the context store.
-
-    This is irreversible. Use with caution.
-
-    Args:
-        storage: Optional custom storage directory path.
-
-    Returns:
-        A confirmation message.
-    """
-    ctx = _get_ctx(storage=storage or None)
+def _tool_ctx_clear(args: dict[str, Any]) -> str:
+    storage = str(args.get("storage", "")) or None
+    ctx = _get_ctx(storage=storage)
     count = len(ctx.messages)
+
     ctx._messages.clear()
     if ctx._index:
         ctx._index.clear()
@@ -367,9 +487,77 @@ def ctx_clear(storage: str = "") -> str:
     )
 
 
-def main() -> None:
+# ---------------------------------------------------------------------------
+# Server setup
+# ---------------------------------------------------------------------------
+
+server = Server("contextkit")
+
+_TOOL_HANDLERS: dict[str, Any] = {
+    "ctx_add": _tool_ctx_add,
+    "ctx_search": _tool_ctx_search,
+    "ctx_compress": _tool_ctx_compress,
+    "ctx_stats": _tool_ctx_stats,
+    "ctx_export": _tool_ctx_export,
+    "ctx_import": _tool_ctx_import,
+    "ctx_list": _tool_ctx_list,
+    "ctx_clear": _tool_ctx_clear,
+}
+
+
+@server.list_tools()
+async def handle_list_tools() -> list[Tool]:
+    """Return all available ContextKit tools."""
+    return TOOLS
+
+
+@server.call_tool()
+async def handle_call_tool(
+    name: str,
+    arguments: dict[str, Any] | None,
+) -> list[TextContent]:
+    """Dispatch a tool call to the appropriate handler."""
+    handler = _TOOL_HANDLERS.get(name)
+    if handler is None:
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {"status": "error", "message": f"Unknown tool: {name}"}
+                ),
+            )
+        ]
+
+    args = arguments or {}
+    try:
+        result = handler(args)
+    except Exception as exc:
+        result = json.dumps({"status": "error", "message": str(exc)})
+
+    return [TextContent(type="text", text=result)]
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+
+async def _run() -> None:
     """Run the MCP server over stdio."""
-    mcp.run(transport="stdio")
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name="contextkit",
+                server_version="0.2.0",
+            ),
+        )
+
+
+def main() -> None:
+    """Synchronous entry point — called by the CLI and __main__."""
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":
