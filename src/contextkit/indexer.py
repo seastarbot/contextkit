@@ -43,16 +43,13 @@ class VectorIndex:
         self._ids: list[str] = []
         self._client: Any = None
 
-    def _get_client(self) -> Any:
-        """Lazy-init the OpenAI client."""
+    def _get_client(self) -> Any | None:
+        """Lazy-init the OpenAI client. Returns None if openai not installed."""
         if self._client is None:
             try:
                 from openai import OpenAI
             except ImportError:
-                raise ImportError(
-                    "OpenAI package required for embedding. "
-                    "Install with: pip install openai"
-                )
+                return None
             kwargs: dict[str, str] = {}
             if self.base_url:
                 kwargs["base_url"] = self.base_url
@@ -72,6 +69,9 @@ class VectorIndex:
             return np.array([])
 
         client = self._get_client()
+        if client is None:
+            # No OpenAI client available — return empty, will use keyword fallback
+            return np.array([])
         # OpenAI supports batching — max 2048 texts per call
         all_embeddings: list[list[float]] = []
         batch_size = 512
@@ -117,11 +117,10 @@ class VectorIndex:
             msg_id: Unique message identifier.
             text: Text content to embed and index.
         """
+        self._ids.append(msg_id)
         embedding = self._embed([text])
         if embedding.size == 0:
             return
-
-        self._ids.append(msg_id)
 
         if self._vectors is None:
             self._vectors = embedding
